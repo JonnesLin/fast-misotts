@@ -4,9 +4,9 @@
 the original `Generator`, run with static key/value caches, a CUDA graph for each audio frame and continuous batching:
 many utterances generate together, and a long one holds up only its own row.
 
-- **Fast.** On an H200 the original speaks at 0.44x real time; fast-misotts speaks one utterance at 4.2x (9.5 times
-  the original) and many at up to 191x. On an L40S (the original 0.50x): 1.3x for one, 2.9x with low-bit weights
-  that lose about what 8-bit weights do, and up to 105x for many.
+- **Fast.** One utterance 9.6 times as fast as the original on an H200 and 2.7 times on an L40S (5.9 times with
+  low-bit weights that lose about what 8-bit weights do); many at once up to 439 times as fast on an H200 and 210 times
+  on an L40S. (The original speaks at 0.435x real time on an H200 and 0.50x on an L40S.)
 - **The same outputs.** In FP32 with greedy decoding, its audio codes equal the original's on every frame of all 32
   codebooks. In BF16 (the default) the rounding differs from the original's, so the two are compared by what they say:
   Whisper's error rates, the lengths and the runaways do not differ (below).
@@ -21,10 +21,11 @@ many utterances generate together, and a long one holds up only its own row.
 pip install git+https://github.com/JonnesLin/fast-misotts
 ```
 
-You need a CUDA GPU with room for the weights (16.4 GB in BF16; about 6 GB once in low-bit weights, which are made
-from the BF16 ones as they load) and the cache (268 MB per row at the full 2,048 positions; 2.1 GB at the default 8
-rows), and PyTorch 2.5 or later. The first run downloads [MisoLabs/MisoTTS](https://huggingface.co/MisoLabs/MisoTTS)
-(33 GB in FP32, cast to BF16 as it loads).
+You need a CUDA GPU with room for the weights (16.4 GB in BF16; about 6 GB in low-bit weights) and the cache (268 MB
+per row at the full 2,048 positions; 2.1 GB at the default 8 rows), and PyTorch 2.5 or later. The first run downloads
+[MisoLabs/MisoTTS](https://huggingface.co/MisoLabs/MisoTTS) (33 GB in FP32, cast to BF16 as it loads), or the
+pre-quantized [JonesLin/misotts-8b-int4-int8w](https://huggingface.co/JonesLin/misotts-8b-int4-int8w) (about 6 GB,
+below) when you ask for it.
 
 The text tokenizer is Llama 3.2's, as in the original, from the gated
 [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B). Accept its license on the Hub and run
@@ -85,7 +86,8 @@ compile=False, fuse=True, quantize=None, awq=None, watermark=False)`:
   frame (1,125 is the original's 90 s).
 - `compile=True`: the frame step's layers through `torch.compile`, about 20 s the first time on a machine and 2 s
   once its compile cache has them. `compile="autotune"`: Inductor also times its own kernels against cuBLAS's (about
-  a minute the first time): the fastest for one utterance at a time (4.2x real time on an H200 against 3.5x).
+  a minute the first time): the fastest for one utterance at a time (9.6 times the original on an H200, against 8.0
+  with `compile=True`).
 - `fuse=True`: q, k and v, and w1 and w3, as one product each. The same FP32 codes; a frame 18% shorter on an H200.
 - `quantize`, `awq`: low-bit weights (below).
 - `watermark=True`: the original's SilentCipher watermark on the audio (below).
@@ -95,24 +97,25 @@ a babbled first word. The original does this as often as fast-misotts (below). G
 
 ## Speed
 
-Times real time (audio seconds per wall second, Mimi's decoding included), BF16 unless low-bit, sampled at the
+Audio made per second of wall time (Mimi's decoding included), as a multiple of the original `Generator`'s one
+utterance at a time: 0.50 s of audio a second on the L40S, 0.435 s on the H200. BF16 unless low-bit, sampled at the
 original's defaults (temperature 0.9, top 50), at most 20 s per utterance. One at a time: the 64 sentences of
 `fast_misotts/bench_texts.json` (about 11 words each) in turn. Many: the same sentences 16 times over (1,024
 requests) through 128 rows.
 
 | | L40S | H200 |
 | --- | ---: | ---: |
-| Original `Generator`, one at a time | 0.50 | 0.44 |
-| fast-misotts, one at a time | 0.98 | 1.44 |
-| fast-misotts, one at a time, `compile=True` | 1.33 | 3.50 |
-| fast-misotts, one at a time, `compile="autotune"` | | 4.17 |
-| fast-misotts, one at a time, `compile="autotune"`, `quantize="int4:backbone+int8w:decoder"` | 2.94 | 4.35 |
-| fast-misotts, many | 51.0 | 102 |
-| fast-misotts, many, `compile=True` | 69.9 | 191 |
-| fast-misotts, many, `compile=True`, `quantize="int8"` | 105 | 170 |
+| Original `Generator`, one at a time | 1x | 1x |
+| fast-misotts, one at a time | 2.0x | 3.3x |
+| fast-misotts, one at a time, `compile=True` | 2.7x | 8.0x |
+| fast-misotts, one at a time, `compile="autotune"` | | 9.6x |
+| fast-misotts, one at a time, `compile="autotune"`, `quantize="int4:backbone+int8w:decoder"` | 5.9x | 10x |
+| fast-misotts, many | 102x | 234x |
+| fast-misotts, many, `compile=True` | 140x | 439x |
+| fast-misotts, many, `compile=True`, `quantize="int8"` | 210x | 391x |
 
 The rows without `compile` and the "many" rows were measured before `fuse` (now the default). Through 64 rows instead
-of 128: 41.9x and 45.4x on the L40S, 59.8x and 102x on the H200. Rows that take the next request as soon as their
+of 128: 84x and 91x on the L40S, 137x and 234x on the H200. Rows that take the next request as soon as their
 utterance ends beat static batches (each batch until its longest utterance ends) by 2 to 2.7 times on this queue.
 Peak memory at 128 rows (positions 512): 34 GB.
 
@@ -131,15 +134,16 @@ low (an L40S).
 inputs), `int8` (8-bit weights and inputs) and `fp8` (both in FP8). None is the original's arithmetic, so they are
 judged by how far they move the model's next-code distributions from BF16's: KL(BF16 || mode) in nats,
 teacher-forced on the codes BF16 samples for the 64 sentences (`python -m fast_misotts.bench kl`), for codebook 0 (the
-backbone's) and codebooks 1-31 (the depth decoder's). One utterance at a time, times real time:
+backbone's) and codebooks 1-31 (the depth decoder's). One utterance at a time, speed as a multiple of the
+original's (above):
 
 | `quantize` | KL, codebook 0 / 1-31 | L40S | H200 |
 | --- | ---: | ---: | ---: |
-| none (BF16) | 0 / 0 | 1.33 | 4.17 |
-| `int4:backbone+int8w:decoder`, with AWQ | 0.036 / 0.025 | 2.94 | 4.35 |
-| `int4:backbone+int4/g32:decoder`, with AWQ | 0.036 / 0.216 | 3.50 | 4.18 |
-| `int8` | 0.013 / 0.027 | 1.62 | |
-| `int4` | 0.044 / 0.491 | 3.66 | |
+| none (BF16) | 0 / 0 | 2.7x | 9.6x |
+| `int4:backbone+int8w:decoder`, with AWQ | 0.036 / 0.025 | 5.9x | 10x |
+| `int4:backbone+int4/g32:decoder`, with AWQ | 0.036 / 0.216 | 7.0x | 9.6x |
+| `int8` | 0.013 / 0.027 | 3.2x | |
+| `int4` | 0.044 / 0.491 | 7.3x | |
 
 (BF16 on the L40S, `int8` and `int4` with `compile=True`; the rest with `compile="autotune"`.)
 
@@ -168,6 +172,17 @@ tts = MisoTTS(batch=1, compile="autotune", quantize="int4:backbone+int8w:decoder
 ```
 
 A search is applied only to the stacks in `int4`, and only for the groups it was made for.
+
+Pre-quantized: [JonesLin/misotts-8b-int4-int8w](https://huggingface.co/JonesLin/misotts-8b-int4-int8w) holds
+`int4:backbone+int8w:decoder` with AWQ, about 6 GB. Loaded as it is stored, it never holds the 16 GB of BF16
+weights, and needs no `quantize` or `awq`:
+
+```python
+tts = MisoTTS("JonesLin/misotts-8b-int4-int8w", batch=1, compile="autotune")
+```
+
+Make one of your own (int4 and int8w parts) with
+`python -m fast_misotts.quant --quantize int4:backbone+int8w:decoder --awq awq.safetensors --out model.safetensors`.
 
 ## The same outputs
 

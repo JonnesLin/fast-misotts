@@ -11,7 +11,7 @@ import torch
 from .codec import Mimi
 from .engine import Engine, Sampling
 from .model import load_model
-from .quant import parse as parse_quantize, quantize as quantize_model
+from .quant import load_quantized, parse as parse_quantize, quantize as quantize_model, saved_spec
 from .text import TextTokenizer, audio_frames, text_frames
 from .watermark import MISO_TTS_WATERMARK, Watermarker
 
@@ -54,7 +54,8 @@ class MisoTTS:
     quantize: "fp8", "int8", "int8w" or "int4" weights in the two stacks' layers, faster and no longer exact
     (fast_misotts.quant; a stack each: "int4:backbone+int8w:decoder"; use with compile=True); awq: with int4, a
     fast_misotts.awq search's scales and clipping (.safetensors; python -m fast_misotts.awq makes it once), applied
-    before rounding (AWQ: the same kernel and speed); fuse: q, k and v, and w1 and w3, as one product each
+    before rounding (AWQ: the same kernel and speed); a pre-quantized model (fast_misotts.quant.export_quantized) is
+    loaded as saved, without quantize or awq; fuse: q, k and v, and w1 and w3, as one product each
     (MisoModel.fuse_projections; on by default: 17% faster a frame at one row on an H200, and its FP32 greedy
     codes still equal the original's); kernels: fast_misotts.kernels' Triton depth-decoder attention and top-k
     sampling (no longer exact: judged as quantize is)."""
@@ -66,18 +67,25 @@ class MisoTTS:
                  watermark_key: Sequence[int] = MISO_TTS_WATERMARK, quantize: str | None = None, fuse: bool = True,
                  kernels: bool = False, awq: str | Path | None = None):
         source = model or os.environ.get("MISO_TTS_8B_MODEL", DEFAULT_MODEL)
-        self.model = load_model(model_file(source), device=device, dtype=dtype)
-        if awq:
-            from .awq import apply as apply_awq, load as load_awq
-            plan = parse_quantize(quantize) if quantize else {}
-            groupsizes = {stack: size for stack, (mode, size) in plan.items() if mode == "int4"}
-            if not groupsizes:
-                raise ValueError("awq: with int4 on a stack (quantize='int4...'): it prepares 4-bit rounding")
-            apply_awq(self.model, load_awq(awq), groupsizes)  # before fusing: q, k, v and w1, w3 apart
-        if fuse:
-            self.model.fuse_projections()
-        if quantize:
-            quantize_model(self.model, quantize)
+        path = model_file(source)
+        saved = saved_spec(path)
+        if saved:  # pre-quantized (fast_misotts.quant.export_quantized): fused, its low-bit weights and AWQ in it
+            if (quantize and quantize != saved) or awq:
+                raise ValueError(f"{source} is saved quantized ({saved!r}, AWQ in it): give neither quantize nor awq")
+            self.model = load_quantized(path, device=device, dtype=dtype)
+        else:
+            self.model = load_model(path, device=device, dtype=dtype)
+            if awq:
+                from .awq import apply as apply_awq, load as load_awq
+                plan = parse_quantize(quantize) if quantize else {}
+                groupsizes = {stack: size for stack, (mode, size) in plan.items() if mode == "int4"}
+                if not groupsizes:
+                    raise ValueError("awq: with int4 on a stack (quantize='int4...'): it prepares 4-bit rounding")
+                apply_awq(self.model, load_awq(awq), groupsizes)  # before fusing: q, k, v and w1, w3 apart
+            if fuse:
+                self.model.fuse_projections()
+            if quantize:
+                quantize_model(self.model, quantize)
         self.tokenizer = TextTokenizer(tokenizer)
         self.codec = Mimi(mimi, device=device)
         self.engine = Engine(self.model, batch, positions, max_frames, Sampling(temperature, topk, greedy), graphs,

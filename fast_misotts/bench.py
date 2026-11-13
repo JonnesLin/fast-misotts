@@ -573,7 +573,8 @@ def divergence(wanted, got, codes):
 def kl(args):
     """Each --variants model's next-code distributions against the reference's (the model as the common flags load
     it), teacher-forced on the codes the reference samples for the first --texts texts (seed --seed). A variant is
-    NAME=OPTIONS, OPTIONS comma-separated of fuse, quantize=MODE and awq=PATH (none: BF16, not fused)."""
+    NAME=OPTIONS, OPTIONS comma-separated of fuse, quantize=MODE, awq=PATH and model=PATH (another checkpoint, a
+    pre-quantized one say; none: BF16, not fused)."""
     from .api import MisoTTS, Request
     requests = [Request(text, speaker=number % 2) for number, text in enumerate(texts()[:args.texts])]
     reference = load(args, batch=16, positions=args.positions, max_frames=args.frames)
@@ -590,9 +591,10 @@ def kl(args):
     for item in args.variants:
         name, _, spec = item.partition("=")
         options = dict(option.partition("=")[::2] for option in spec.split(",") if option)
-        tts = MisoTTS(args.model, tokenizer=args.tokenizer, mimi=args.mimi, dtype=getattr(torch, args.dtype), batch=1,
-                      positions=args.positions, max_frames=args.frames, graphs=False, fuse="fuse" in options,
-                      quantize=options.get("quantize") or None, awq=options.get("awq") or None)
+        tts = MisoTTS(options.get("model") or args.model, tokenizer=args.tokenizer, mimi=args.mimi,
+                      dtype=getattr(torch, args.dtype), batch=1, positions=args.positions, max_frames=args.frames,
+                      graphs=False, fuse="fuse" in options, quantize=options.get("quantize") or None,
+                      awq=options.get("awq") or None)
         got = [teacher_forced(tts.model, prompt, item) for prompt, item in zip(prompts, codes)]
         report["variants"][name] = {"options": options, **divergence(wanted, got, codes)}
         print(json.dumps({name: {key: value for key, value in report["variants"][name].items()

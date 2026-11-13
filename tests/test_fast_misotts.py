@@ -283,6 +283,28 @@ class QuantTests(unittest.TestCase):
         got = model.decoder.layers[0].mlp.w1(x)
         self.assertLess(float((got - want).norm() / want.norm()), 0.02)
 
+    def test_a_saved_quantized_model_loads_as_quantize_holds_it(self):
+        from safetensors.torch import save_file
+        from fast_misotts.quant import Int8WeightLinear, export_quantized, load_quantized, quantize, saved_spec
+        model = tiny().fuse_projections()
+        tensors, metadata = export_quantized(model, "int8w:decoder")
+        folder = ROOT / ".cache" / "test-artifacts" / uuid4().hex
+        folder.mkdir(parents=True)
+        save_file(tensors, str(folder / "model.safetensors"), metadata=metadata)
+        self.assertEqual(saved_spec(folder / "model.safetensors"), "int8w:decoder")
+        loaded = load_quantized(folder / "model.safetensors", device="cpu", dtype=torch.float32, config=model.config)
+        quantize(model, "int8w:decoder")  # the same model quantized in memory
+        want, got = model.state_dict(), loaded.state_dict()
+        self.assertEqual(sorted(got), sorted(want))
+        for key, value in want.items():
+            self.assertTrue(torch.equal(got[key], value), key)
+        self.assertIsInstance(loaded.decoder.layers[0].mlp.w13, Int8WeightLinear)
+        self.assertIsInstance(loaded.backbone.layers[0].mlp.w13, torch.nn.Linear)
+        self.assertTrue(torch.equal(loaded.backbone.rope, model.backbone.rope))
+        self.assertTrue(torch.equal(loaded.offsets, model.offsets))
+        with self.assertRaisesRegex(ValueError, "int4 and int8w"):
+            export_quantized(tiny().fuse_projections(), "int8")
+
 
 @unittest.skipIf(torch is None, "Requires torch")
 class AwqTests(unittest.TestCase):

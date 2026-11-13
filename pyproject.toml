@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fast-misotts"
+dynamic = ["version"]
+description = "MisoTTS 8B, fast: the original weights and outputs, with static caches, CUDA graphs, continuous batching, streaming and low-bit weights"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "LicenseRef-Modified-MIT"
+license-files = ["LICENSE"]
+keywords = ["text-to-speech", "tts", "misotts", "csm", "speech", "cuda-graphs", "quantization", "awq"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.5",  # scaled_dot_product_attention(enable_gqa=...)
+    "safetensors>=0.4",
+    "tokenizers>=0.19",
+    "huggingface_hub>=0.23",
+    "moshi>=0.2.2",  # Mimi
+    "numpy",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+bench = ["transformers>=4.45", "scipy"]  # Whisper for `python -m fast_misotts.bench score`
+
+[project.urls]
+Homepage = "https://github.com/JonnesLin/fast-misotts"
+Issues = "https://github.com/JonnesLin/fast-misotts/issues"
+
+[project.scripts]
+fast-misotts = "fast_misotts.__main__:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "fast_misotts.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["fast_misotts*"]
+
+[tool.setuptools.package-data]
+fast_misotts = ["bench_texts.json", "calibration_texts.json"]

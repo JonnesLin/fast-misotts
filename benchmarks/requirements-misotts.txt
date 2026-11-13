@@ -1,0 +1,14 @@
+# The original MisoTTS inference stack (github.com/MisoLabsAI/MisoTTS requirements.txt at cd7dde1), for the baseline
+# that fast_misotts is measured and checked against. silentcipher left out: the baseline runs
+# without the watermark, as fast_misotts does by default in these comparisons.
+torch==2.4.0
+torchaudio==2.4.0
+tokenizers==0.21.0
+transformers==4.49.0
+huggingface_hub==0.28.1
+moshi==0.2.2
+bitsandbytes==0.45.5
+torchtune==0.4.0
+torchao==0.9.0
+safetensors
+soundfile

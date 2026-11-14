@@ -148,29 +148,33 @@ def quality(args):
 def demo(args):
     """The demo videos' original lane: the texts at --indices of bench_texts.json, sampled (speakers alternating),
     one at a time as it runs, after one untimed warm-up: each call's wall time (frames and Mimi) in --times, and
-    the audio in an .npz like quality's (array s-n: seed s, text n)."""
+    the audio in an .npz like quality's (array s-n: seed s, text n). --seeds: the texts again for each seed (the
+    seed set before each pass); "seconds" holds the first seed's times, "by_key" every one's."""
     import numpy as np
     import torch
     made, codes = original(args, "bfloat16")
     items = texts()
     generate(made, text=items[0], speaker=0, context=[], max_audio_length_ms=args.frames * 80)  # warm-up
-    torch.manual_seed(args.seed)
-    torch.cuda.synchronize()
-    audio, seconds = {}, []
-    for place, number in enumerate(args.indices):
-        start = time.perf_counter()
-        wave = generate(made, text=items[number], speaker=place % 2, context=[],
-                        max_audio_length_ms=args.frames * 80)
+    audio, by_key = {}, {}
+    for seed in args.seeds or [args.seed]:
+        torch.manual_seed(seed)
         torch.cuda.synchronize()
-        seconds.append(round(time.perf_counter() - start, 3))
-        wave = np.zeros(0, dtype=np.float32) if wave is None else wave.float().cpu().numpy()
-        audio[f"{args.seed}-{number}"] = np.clip(np.rint(wave * 32768), -32768, 32767).astype("<i2")
+        for place, number in enumerate(args.indices):
+            start = time.perf_counter()
+            wave = generate(made, text=items[number], speaker=place % 2, context=[],
+                            max_audio_length_ms=args.frames * 80)
+            torch.cuda.synchronize()
+            by_key[f"{seed}-{number}"] = round(time.perf_counter() - start, 3)
+            wave = np.zeros(0, dtype=np.float32) if wave is None else wave.float().cpu().numpy()
+            audio[f"{seed}-{number}"] = np.clip(np.rint(wave * 32768), -32768, 32767).astype("<i2")
     np.savez(args.out, **audio)
+    first = (args.seeds or [args.seed])[0]
+    seconds = [by_key[f"{first}-{number}"] for number in args.indices]
     Path(args.times).write_text(json.dumps({"device": torch.cuda.get_device_name(), "torch": torch.__version__,
                                             "indices": args.indices, "texts": [items[n] for n in args.indices],
-                                            "seconds": seconds, "total": round(sum(seconds), 3)}, indent=1) + "\n",
-                                encoding="utf-8")
-    print(json.dumps({"total_seconds": round(sum(seconds), 1)}), flush=True)
+                                            "seconds": seconds, "total": round(sum(seconds), 3), "by_key": by_key},
+                                           indent=1) + "\n", encoding="utf-8")
+    print(json.dumps({"total_seconds": round(sum(by_key.values()), 1)}), flush=True)
 
 
 def main():
@@ -193,6 +197,8 @@ def main():
             command.add_argument("--indices", type=lambda value: [int(item) for item in value.split(",")],
                                  required=True)
             command.add_argument("--seed", type=int, default=0)
+            command.add_argument("--seeds", type=lambda value: [int(item) for item in value.split(",")],
+                                 help="several seeds, the texts again for each (instead of --seed)")
             command.add_argument("--times", required=True)
     args = parser.parse_args()
     {"speed": speed, "parity": parity, "quality": quality, "demo": demo}[args.command](args)

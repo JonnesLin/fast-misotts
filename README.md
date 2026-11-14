@@ -15,6 +15,12 @@ many utterances generate together, and a long one holds up only its own row.
 - **Easy.** `pip install git+https://github.com/JonnesLin/fast-misotts`; the weights come from the original
   repository on first use.
 
+[![The same sentence on the same GPU: the original MisoTTS (left) speaks after 5.2 s, fast-misotts (right) after 0.08 s](assets/demo.gif)](assets/demo.mp4)
+
+The same sentences on the same GPU, timed from the press of Generate: the original on the left, fast-misotts on the
+right (4-bit + 8-bit weights, `compile="autotune"`, streaming). Click for [the whole video with sound](assets/demo.mp4):
+three sentences, each side's own audio, the words lit as they are said.
+
 ## Install
 
 ```bash
